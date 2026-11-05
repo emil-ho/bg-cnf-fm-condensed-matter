@@ -126,6 +126,17 @@ class FlatTorus(Euclidean):
         z = 2 * math.pi * (y_particles - x_particles) / box_edges
         result = box_edges * torch.atan2(torch.sin(z), torch.cos(z)) / (2 * math.pi)
         return self._from_particles(result)
+
+
+class FlatTorusNoDrift(FlatTorus):
+    """Flat torus manifold where tangent vectors are projected to a mean-free subspace (zero CoM drift)."""
+
+    def proju(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        """Subtract the mean particle velocity from tangent vector u."""
+        u_particles = self._to_particles(u)
+        mean = torch.mean(u_particles, dim=-2, keepdim=True)
+        return self._from_particles(u_particles - mean)
+
     
 
 

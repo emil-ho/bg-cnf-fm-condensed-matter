@@ -1,8 +1,9 @@
+import math
+
 import torch
 import torch.nn as nn
-from torch_geometric.utils import scatter
-import math
 from torch import Tensor
+
 
 class MLP_dynamics(nn.Module):
     def __init__(self, dim: int = 2, h: int = 64):
@@ -148,7 +149,6 @@ class PE_GCL(nn.Module):
         edge_feat = self.edge_mlp(edge_in)  # [E, hidden_nf]
 
         # node feature update
-        # msg = scatter(edge_feat, row, dim=0, dim_size=h.size(0), reduce=self.agg)
         msg = scatter_sum(edge_feat, row, h.size(0))
         if node_attr is not None:
             node_in = torch.cat([h, msg, node_attr], dim=-1)
@@ -160,7 +160,6 @@ class PE_GCL(nn.Module):
         scale = self.coord_mlp(edge_feat)    # [E, 1]
 
         trans = coord_diff * scale
-        # coord_update = scatter(trans, row, dim=0, dim_size=x.size(0), reduce=self.agg)
         coord_update = scatter_sum(trans, row, x.size(0))
         x_out = x + coord_update
 
@@ -225,9 +224,6 @@ class PEGNN(nn.Module):
         self.hidden_nf = hidden_nf
         self.n_layers = n_layers
         self.coords_range_layer = float(coords_range) / self.n_layers
-        
-        # if agg == 'mean':
-        #     self.coords_range_layer = self.coords_range_layer * box_length.n_particles
         
         # Input embedding
         self.embedding = nn.Linear(in_node_nf, self.hidden_nf)
@@ -378,12 +374,10 @@ class PEGNN_dynamics(nn.Module):
         # Reshape coordinates
         x0 = x.reshape(n_batch * self.eq_pos.shape[0], self.eq_pos.shape[1]).clone()
 
-        edge_attr = None
         # Compute edge attributes (squared distances using box_edges)
         coord_diff =  x0[edge_index[0]] - x0[edge_index[1]]
         coord_diff =  coord_diff - self.box_edges * torch.round(coord_diff / self.box_edges)
         edge_attr = torch.sum(coord_diff ** 2, dim=1, keepdim=True)  # (B*n_edges, 1)
-        # edge_attr = self.rbf(edge_attr)
 
         # Forward pass through PEGNN
         _, x_final = self.pegnn(h, x0, edge_index, edge_attr=edge_attr)
@@ -430,37 +424,3 @@ class PEGNN_dynamics(nn.Module):
         ei_b = self.edge_index.unsqueeze(1) + offsets  # (2, B, n_edges)
         return ei_b.reshape(2, -1)
 
-
-if __name__ == '__main__':
-    eq_pos = torch.tensor(
-        [   # The first 4 atoms are the same as for FCC.
-            [0.0, 0.0, 0.0],
-            [0.0, 2.0, 2.0],
-            [2.0, 0.0, 2.0],
-            [2.0, 2.0, 0.0],
-            # The additional are located within the unit cell.
-            [3.0, 3.0, 3.0],
-            [3.0, 1.0, 1.0],
-            [1.0, 3.0, 1.0],
-            [1.0, 1.0, 3.0],
-        ]) / 4
-
-    torch.manual_seed(123)
-    vf = PEGNN_dynamics(
-        box_edges=torch.tensor([1,1,1]),
-        hidden_nf=32,
-        n_layers=3,
-        rmax=0.48,
-        eq_pos=eq_pos,
-        # now extra stuff
-        box_edges_unit_cell = torch.tensor([0.5, 0.5, 0.5]),
-        eq_pos_labeling_features = 1,
-        rbf_features = 10,
-        rbf_trainable = False,
-
-    )
-
-    pos = eq_pos + torch.randn_like(eq_pos) * 0.01
-    v = vf(t=torch.tensor(0), x=pos.reshape(1, 8 * 3)).reshape(8,3)
-    print(v)
-    print(vf.edge_index.shape)
